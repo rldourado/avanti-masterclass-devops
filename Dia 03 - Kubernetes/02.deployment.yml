@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: avanti
+  labels:
+    app: avanti
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: avanti
+  template:
+    metadata:
+      labels:
+        app: avanti
+    spec:
+      containers:
+        - command:
+            - /bin/sh
+          image: alpine
+          imagePullPolicy: IfNotPresent
+          name: avanti
+          resources: {}
+          stdin: true
+          tty: true
+          volumeMounts:
+            - mountPath: /avanti
+              name: volume
+      volumes:
+        - name: volume
+          persistentVolumeClaim:
+            claimName: avanti
+  

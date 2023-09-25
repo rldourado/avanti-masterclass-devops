@@ -1,0 +1,113 @@
+name: Build and push image to ECR & Deploy to EKS
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  VERSION_FILE: package.json
+  VERSION_EXTRACT_PATTERN: '"version": "([^"]+)",'
+  VERSION_REPLACE_PATTERN: '"version": "\1",'
+  TMP_SUFFIX: _updated
+
+jobs:
+  continuous-delivery:
+    name: Continuous Delivery
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      packages: read
+      statuses: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate versions
+        uses: HardNorth/github-version-generate@v1.3.0
+        with:
+          version-source: file
+          version-file: ${{ env.VERSION_FILE }}
+          version-file-extraction-pattern: ${{ env.VERSION_EXTRACT_PATTERN }}
+
+      - name: Setup git credentials
+        run: |
+          git config user.name 'Rubens Levy Dourado'
+          git config user.email 'rubens.dourado@gmail.com'
+    
+      - name: Update version
+        run: |
+          export CURRENT_VERSION_VALUE=`echo '${{ env.CURRENT_VERSION }}' | sed -E 's/(.*)/${{ env.VERSION_REPLACE_PATTERN }}/'`
+          export NEXT_VERSION_VALUE=`echo '${{ env.NEXT_VERSION }}' | sed -E 's/(.*)/${{ env.VERSION_REPLACE_PATTERN }}/'`
+          # -------------------------------------------------- #
+          sed "s/${CURRENT_VERSION_VALUE}/${NEXT_VERSION_VALUE}/g" ${{ env.VERSION_FILE }} > ${{ env.VERSION_FILE }}${{ env.TMP_SUFFIX }}
+          # -------------------------------------------------- #
+          rm ${{ env.VERSION_FILE }}
+          mv ${{ env.VERSION_FILE }}${{ env.TMP_SUFFIX }} ${{ env.VERSION_FILE }}
+          # -------------------------------------------------- #
+          git add ${{ env.VERSION_FILE }}
+          git commit -m "Version update"
+          git push
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: sa-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          mask-password: true
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: avanti-masterclass-app
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+          --tag $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+          --tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+          .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - uses: azure/setup-kubectl@v3
+        with:
+            version: 'v1.25.0'
+        id: install-kubectl
+
+      - name: Configure kubectl
+        run: |
+          echo ${{ secrets.KUBECONFIG }} | base64 --decode > kubeconfig.yaml
+
+      - name: Deploy
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: avanti-masterclass-app
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          kubectl \
+            --kubeconfig=kubeconfig.yaml \
+            --namespace=${{ env.NAMESPACE }} \
+            delete secret ecrcred || true
+          # -------------------------------------------------- #
+          kubectl \
+            --kubeconfig=kubeconfig.yaml \
+            --namespace=${{ env.NAMESPACE }} \
+            create secret docker-registry ecrcred \
+            --docker-server=${{ env.ECR_REGISTRY }} \
+            --docker-username=AWS \
+            --docker-password=$(aws ecr get-login-password)
+          # -------------------------------------------------- #
+          envsubst < k8s.yaml | kubectl \
+            --kubeconfig=kubeconfig.yaml \
+            --namespace=${{ env.NAMESPACE }} \
+            apply -f -

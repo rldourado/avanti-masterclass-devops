@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: avanti-masterclass-app
+spec:
+  ports:
+    - name: tcp6060
+      port: 6060
+      protocol: TCP
+      targetPort: 6060
+  selector:
+    app: avanti-masterclass-app
+  sessionAffinity: ClientIP
+  type: LoadBalancer
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: avanti-masterclass-app
+  name: avanti-masterclass-app
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: avanti-masterclass-app
+  template:
+    metadata:
+      labels:
+        app: avanti-masterclass-app
+    spec:
+      containers:
+      - image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+        imagePullPolicy: IfNotPresent
+        name: avanti-masterclass-app
+        resources:
+          limits:
+            cpu: 30m
+            memory: 64Mi
+          requests:
+            cpu: 5m
+            memory: 32Mi
+      restartPolicy: Always
+      imagePullSecrets:
+      - name: ecrcred

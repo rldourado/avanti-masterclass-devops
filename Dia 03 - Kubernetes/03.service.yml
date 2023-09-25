@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: avanti
+spec:
+  ports:
+    - name: tcp8080
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    app: avanti
+  sessionAffinity: ClientIP
+  type: ClusterIP
